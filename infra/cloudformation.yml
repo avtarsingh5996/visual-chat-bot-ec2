@@ -1,0 +1,117 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Resources:
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.micro
+      ImageId: ami-0ad21ae1d0696ad58  # Amazon Linux 2 AMI in ap-south-1
+      KeyName: <YOUR_KEY_PAIR>       # Replace with your EC2 key pair
+      SecurityGroups: [!Ref EC2SecurityGroup]
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+          yum install -y python3 git
+          pip3 install --upgrade pip
+          mkdir /app
+          cd /app
+          git clone <YOUR_GITHUB_REPO_URL> .  # Replace with your repo URL
+          cd backend
+          pip3 install -r requirements.txt
+          nohup python3 app.py &
+      Tags:
+        - Key: Name
+          Value: VisualChatBotEC2
+
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP and SSH
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 5000
+          ToPort: 5000
+          CidrIp: 0.0.0.0/0
+
+  AudioBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: visual-chatbot-audio
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        IgnorePublicAcls: false
+        BlockPublicPolicy: false
+        RestrictPublicBuckets: false
+
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: visual-chatbot-frontend
+      WebsiteConfiguration:
+        IndexDocument: index.html
+
+  ChatHistoryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: ChatHistory
+      AttributeDefinitions:
+        - AttributeName: request_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: request_id
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+
+  AppSyncApi:
+    Type: AWS::AppSync::GraphQLApi
+    Properties:
+      Name: VisualChatBotAppSync
+      AuthenticationType: API_KEY
+
+  AppSyncSchema:
+    Type: AWS::AppSync::GraphQLSchema
+    Properties:
+      ApiId: !Ref AppSyncApi
+      Definition: |
+        type Response {
+          response: String!
+          audioUrl: String!
+          lipSync: AWSJSON!
+        }
+        type Query {
+          dummy: String
+        }
+        type Mutation {
+          publishResponse(response: String!, audioUrl: String!, lipSync: AWSJSON!): Response
+        }
+        type Subscription {
+          onResponse: Response
+          @aws_subscribe(mutations: ["publishResponse"])
+        }
+        schema {
+          query: Query
+          mutation: Mutation
+          subscription: Subscription
+        }
+
+  AppSyncApiKey:
+    Type: AWS::AppSync::ApiKey
+    Properties:
+      ApiId: !Ref AppSyncApi
+
+Outputs:
+  EC2PublicIP:
+    Value: !GetAtt EC2Instance.PublicIp
+  FrontendUrl:
+    Value: !Sub
+      - "http://${BucketName}.s3-website-${Region}.amazonaws.com"
+      - BucketName: !Ref FrontendBucket
+        Region: !Ref AWS::Region
+  AppSyncEndpoint:
+    Value: !GetAtt AppSyncApi.GraphQLUrl
+  AppSyncApiKey:
+    Value: !GetAtt AppSyncApiKey.ApiKey

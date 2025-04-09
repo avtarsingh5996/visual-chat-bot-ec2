@@ -31,7 +31,15 @@ logger.info(f"Parsed APPSYNC_API_ID: {APPSYNC_API_ID}")
 @app.route('/chat', methods=['POST'])
 def chat():
     try:
-        data = request.get_json()
+        # Check Content-Type and parse JSON manually if needed
+        if request.content_type != 'application/json':
+            try:
+                data = json.loads(request.data)
+            except json.JSONDecodeError:
+                return jsonify({'error': 'Invalid JSON data'}), 400
+        else:
+            data = request.get_json()
+        
         user_input = data.get('message')
         if not user_input:
             raise ValueError("No message provided in request body")
@@ -62,7 +70,7 @@ def chat():
         lip_sync_data = generate_lip_sync_data(audio_path)
         logger.info(f"Generated lip sync data with {len(lip_sync_data)} frames")
 
-        audio_key = f'response_{int(time.time())}.mp3'  # Unique key without context
+        audio_key = f'response_{int(time.time())}.mp3'
         s3.upload_file(audio_path, BUCKET_NAME, audio_key, ExtraArgs={'ContentType': 'audio/mpeg'})
         audio_url = f'https://{BUCKET_NAME}.s3.amazonaws.com/{audio_key}'
         logger.info(f"Uploaded audio to S3: {audio_url}")
